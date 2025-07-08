@@ -1,0 +1,159 @@
+- name: Ensure required packages are installed
+  apt:
+    update_cache: yes
+    name:
+      - wget
+      - curl
+      - vim
+      - openssl
+      - git
+    state: present
+
+
+- name: Clone Kubernetes The Hard Way repo
+  git:
+    repo: https://github.com/kelseyhightower/kubernetes-the-hard-way.git
+    dest: /opt/kubernetes-the-hard-way
+    depth: 1
+    update: no
+
+
+- name: Set architecture fact
+  set_fact:
+    arch: "{{ ansible_architecture | regex_replace('x86_64', 'amd64') }}"
+
+
+- name: Download list of binaries to fetch
+  get_url:
+    url: "https://github.com/kelseyhightower/kubernetes-the-hard-way/raw/master/downloads-{{ arch }}.txt"
+    dest: "/opt/kubernetes-the-hard-way/downloads-list.txt"
+    mode: "0644"
+
+
+- name: Ensure download and binary directories exist
+  file:
+    path: "/opt/kubernetes-the-hard-way/downloads/{{ item }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+  loop:
+    - ""
+    - client
+    - cni-plugins
+    - controller
+    - worker
+
+
+- name: Read download file list
+  slurp:
+    src: "/opt/kubernetes-the-hard-way/downloads-list.txt"
+  register: download_list_raw
+
+
+- name: Decode file list into individual URLs
+  set_fact:
+    download_urls: "{{ download_list_raw['content'] | b64decode | splitlines() }}"
+
+
+- name: Download required archives
+  get_url:
+    url: "{{ item }}"
+    dest: "/opt/kubernetes-the-hard-way/downloads/{{ item | basename }}"
+    mode: "0644"
+  loop: "{{ download_urls }}"
+  loop_control:
+    label: "{{ item | basename }}"
+
+
+- name: Extract crictl
+  unarchive:
+    src: "/opt/kubernetes-the-hard-way/downloads/crictl-v1.32.0-linux-{{ arch }}.tar.gz"
+    dest: "/opt/kubernetes-the-hard-way/downloads/worker"
+    remote_src: yes
+
+
+- name: Extract containerd
+  unarchive:
+    src: "/opt/kubernetes-the-hard-way/downloads/containerd-2.1.0-beta.0-linux-{{ arch }}.tar.gz"
+    dest: "/opt/kubernetes-the-hard-way/downloads/worker"
+    remote_src: yes
+    extra_opts: [--strip-components=1]
+
+- name: Extract CNI plugins
+  unarchive:
+    src: "/opt/kubernetes-the-hard-way/downloads/cni-plugins-linux-{{ arch }}-v1.6.2.tgz"
+    dest: "/opt/kubernetes-the-hard-way/downloads/cni-plugins"
+    remote_src: yes
+
+- name: Extract etcd binaries
+  unarchive:
+    src: "/opt/kubernetes-the-hard-way/downloads/etcd-v3.6.0-rc.3-linux-{{ arch }}.tar.gz"
+    dest: "/opt/kubernetes-the-hard-way/downloads/etcd-extract"
+    remote_src: yes
+    extra_opts:
+      - "--wildcards"
+      - "--strip-components=1"
+      - "etcd-v3.6.0-rc.3-linux-{{ arch }}/etcd"
+      - "etcd-v3.6.0-rc.3-linux-{{ arch }}/etcdctl"
+
+- name: Move etcd and etcdctl to client folder
+  copy:
+    remote_src: yes
+    src: "/opt/kubernetes-the-hard-way/downloads/etcd-extract/{{ item }}"
+    dest: "/opt/kubernetes-the-hard-way/downloads/client/{{ item }}"
+    mode: '0755'
+  loop:
+    - etcd
+    - etcdctl
+
+- name: Move kube binaries to their folders
+  copy:
+    remote_src: yes
+    src: "/opt/kubernetes-the-hard-way/downloads/{{ item.src }}"
+    dest: "/opt/kubernetes-the-hard-way/downloads/{{ item.dest }}/{{ item.src }}"
+    mode: '0755'
+  loop:
+    - { src: kube-apiserver, dest: controller }
+    - { src: kube-controller-manager, dest: controller }
+    - { src: kube-scheduler, dest: controller }
+    - { src: kubelet, dest: worker }
+    - { src: kube-proxy, dest: worker }
+    - { src: kubectl, dest: client }
+    - { src: runc.{{ arch }}, dest: worker }
+
+- name: Rename runc binary
+  copy:
+    remote_src: yes
+    src: "/opt/kubernetes-the-hard-way/downloads/worker/runc.{{ arch }}"
+    dest: "/opt/kubernetes-the-hard-way/downloads/worker/runc"
+    mode: '0755'
+
+- name: Remove all .gz and .tgz files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop: >
+    {{
+      lookup('ansible.builtin.find',
+             paths='/opt/kubernetes-the-hard-way/downloads',
+             patterns='*.gz,*.tgz',
+             recurse=yes).files | map(attribute='path') | list
+    }}
+
+- name: Set executable permission for all files in bin folders
+  file:
+    path: "/opt/kubernetes-the-hard-way/downloads/{{ item }}"
+    recurse: yes
+    mode: "0755"
+  loop:
+    - client
+    - cni-plugins
+    - controller
+    - worker
+
+- name: Copy kubectl to /usr/local/bin
+  copy:
+    src: /opt/kubernetes-the-hard-way/downloads/client/kubectl
+    dest: /usr/local/bin/kubectl
+    mode: '0755'
+    remote_src: yes
