@@ -13,7 +13,7 @@
 - name: Clone Kubernetes The Hard Way repo
   git:
     repo: https://github.com/kelseyhightower/kubernetes-the-hard-way.git
-    dest: /opt/kubernetes-the-hard-way
+    dest: /root/kubernetes-the-hard-way
     depth: 1
     update: no
 
@@ -26,13 +26,13 @@
 - name: Download list of binaries to fetch
   get_url:
     url: "https://github.com/kelseyhightower/kubernetes-the-hard-way/raw/master/downloads-{{ arch }}.txt"
-    dest: "/opt/kubernetes-the-hard-way/downloads-list.txt"
+    dest: "/root/kubernetes-the-hard-way/downloads-list.txt"
     mode: "0644"
 
 
 - name: Ensure download and binary directories exist
   file:
-    path: "/opt/kubernetes-the-hard-way/downloads/{{ item }}"
+    path: "/root/kubernetes-the-hard-way/downloads/{{ item }}"
     state: directory
     mode: '0755'
     recurse: yes
@@ -46,49 +46,55 @@
 
 - name: Read download file list
   slurp:
-    src: "/opt/kubernetes-the-hard-way/downloads-list.txt"
+    src: "/root/kubernetes-the-hard-way/downloads-list.txt"
   register: download_list_raw
 
 
 - name: Decode file list into individual URLs
   set_fact:
-    download_urls: "{{ download_list_raw['content'] | b64decode | splitlines() }}"
+    download_urls: "{{ download_list_raw['content'] | b64decode | split('\n') }}"
 
 
 - name: Download required archives
   get_url:
     url: "{{ item }}"
-    dest: "/opt/kubernetes-the-hard-way/downloads/{{ item | basename }}"
+    dest: "/root/kubernetes-the-hard-way/downloads/{{ item | basename }}"
     mode: "0644"
-  loop: "{{ download_urls }}"
+  loop: "{{ download_urls | reject('equalto', '') | list }}"
   loop_control:
     label: "{{ item | basename }}"
 
 
 - name: Extract crictl
   unarchive:
-    src: "/opt/kubernetes-the-hard-way/downloads/crictl-v1.32.0-linux-{{ arch }}.tar.gz"
-    dest: "/opt/kubernetes-the-hard-way/downloads/worker"
+    src: "/root/kubernetes-the-hard-way/downloads/crictl-v1.32.0-linux-{{ arch }}.tar.gz"
+    dest: "/root/kubernetes-the-hard-way/downloads/worker"
     remote_src: yes
 
 
 - name: Extract containerd
   unarchive:
-    src: "/opt/kubernetes-the-hard-way/downloads/containerd-2.1.0-beta.0-linux-{{ arch }}.tar.gz"
-    dest: "/opt/kubernetes-the-hard-way/downloads/worker"
+    src: "/root/kubernetes-the-hard-way/downloads/containerd-2.1.0-beta.0-linux-{{ arch }}.tar.gz"
+    dest: "/root/kubernetes-the-hard-way/downloads/worker"
     remote_src: yes
     extra_opts: [--strip-components=1]
 
 - name: Extract CNI plugins
   unarchive:
-    src: "/opt/kubernetes-the-hard-way/downloads/cni-plugins-linux-{{ arch }}-v1.6.2.tgz"
-    dest: "/opt/kubernetes-the-hard-way/downloads/cni-plugins"
+    src: "/root/kubernetes-the-hard-way/downloads/cni-plugins-linux-{{ arch }}-v1.6.2.tgz"
+    dest: "/root/kubernetes-the-hard-way/downloads/cni-plugins"
     remote_src: yes
+
+- name: Ensure etcd-extract directory exists
+  file:
+    path: /root/kubernetes-the-hard-way/downloads/etcd-extract
+    state: directory
+    mode: '0755'
 
 - name: Extract etcd binaries
   unarchive:
-    src: "/opt/kubernetes-the-hard-way/downloads/etcd-v3.6.0-rc.3-linux-{{ arch }}.tar.gz"
-    dest: "/opt/kubernetes-the-hard-way/downloads/etcd-extract"
+    src: "/root/kubernetes-the-hard-way/downloads/etcd-v3.6.0-rc.3-linux-{{ arch }}.tar.gz"
+    dest: "/root/kubernetes-the-hard-way/downloads/etcd-extract"
     remote_src: yes
     extra_opts:
       - "--wildcards"
@@ -99,8 +105,8 @@
 - name: Move etcd and etcdctl to client folder
   copy:
     remote_src: yes
-    src: "/opt/kubernetes-the-hard-way/downloads/etcd-extract/{{ item }}"
-    dest: "/opt/kubernetes-the-hard-way/downloads/client/{{ item }}"
+    src: "/root/kubernetes-the-hard-way/downloads/etcd-extract/{{ item }}"
+    dest: "/root/kubernetes-the-hard-way/downloads/client/{{ item }}"
     mode: '0755'
   loop:
     - etcd
@@ -109,8 +115,8 @@
 - name: Move kube binaries to their folders
   copy:
     remote_src: yes
-    src: "/opt/kubernetes-the-hard-way/downloads/{{ item.src }}"
-    dest: "/opt/kubernetes-the-hard-way/downloads/{{ item.dest }}/{{ item.src }}"
+    src: "/root/kubernetes-the-hard-way/downloads/{{ item.src }}"
+    dest: "/root/kubernetes-the-hard-way/downloads/{{ item.dest }}/{{ item.src }}"
     mode: '0755'
   loop:
     - { src: kube-apiserver, dest: controller }
@@ -119,30 +125,31 @@
     - { src: kubelet, dest: worker }
     - { src: kube-proxy, dest: worker }
     - { src: kubectl, dest: client }
-    - { src: runc.{{ arch }}, dest: worker }
+    - { src: "runc.{{ arch }}", dest: worker }
 
 - name: Rename runc binary
   copy:
     remote_src: yes
-    src: "/opt/kubernetes-the-hard-way/downloads/worker/runc.{{ arch }}"
-    dest: "/opt/kubernetes-the-hard-way/downloads/worker/runc"
+    src: "/root/kubernetes-the-hard-way/downloads/worker/runc.{{ arch }}"
+    dest: "/root/kubernetes-the-hard-way/downloads/worker/runc"
     mode: '0755'
 
-- name: Remove all .gz and .tgz files
+- name: Find all .gz and .tgz files
+  find:
+    paths: /root/kubernetes-the-hard-way/downloads
+    patterns: "*.gz,*.tgz"
+    use_regex: no
+  register: files_to_delete
+
+- name: Delete all found archive files
   file:
-    path: "{{ item }}"
+    path: "{{ item.path }}"
     state: absent
-  loop: >
-    {{
-      lookup('ansible.builtin.find',
-             paths='/opt/kubernetes-the-hard-way/downloads',
-             patterns='*.gz,*.tgz',
-             recurse=yes).files | map(attribute='path') | list
-    }}
+  loop: "{{ files_to_delete.files }}"
 
 - name: Set executable permission for all files in bin folders
   file:
-    path: "/opt/kubernetes-the-hard-way/downloads/{{ item }}"
+    path: "/root/kubernetes-the-hard-way/downloads/{{ item }}"
     recurse: yes
     mode: "0755"
   loop:
@@ -153,7 +160,7 @@
 
 - name: Copy kubectl to /usr/local/bin
   copy:
-    src: /opt/kubernetes-the-hard-way/downloads/client/kubectl
+    src: /root/kubernetes-the-hard-way/downloads/client/kubectl
     dest: /usr/local/bin/kubectl
     mode: '0755'
     remote_src: yes

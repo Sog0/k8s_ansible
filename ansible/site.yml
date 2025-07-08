@@ -1,3 +1,4 @@
+---
 - name: Setup jumpbox
   hosts: jumpbox
   become: true
