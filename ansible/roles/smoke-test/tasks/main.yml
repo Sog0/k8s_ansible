@@ -1,0 +1,73 @@
+- name: Create Kubernetes secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: kubernetes-the-hard-way
+        namespace: default
+      type: Opaque
+      stringData:
+        mykey: "mydata"
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Create nginx deployment
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: nginx
+        namespace: default
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: nginx
+        template:
+          metadata:
+            labels:
+              app: nginx
+          spec:
+            containers:
+              - name: nginx
+                image: nginx:latest
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Get nginx pods
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: default
+    label_selectors:
+      - app=nginx
+  register: nginx_pods
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Get nginx pod name
+  shell: kubectl get pods -l app=nginx -o jsonpath="{.items[0].metadata.name}"
+  register: pod_name_result
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Set pod name fact
+  set_fact:
+    pod_name: "{{ pod_name_result.stdout }}"
+
+- name: Port-forward pod 8080->80 (runs in background)
+  async: 3600
+  poll: 0
+  shell: kubectl port-forward {{ pod_name }} 8080:80
+  register: result
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Make HEAD request to localhost:8080
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8080
+    method: HEAD
+  register: result
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Show response headers
+  debug:
+    var: result

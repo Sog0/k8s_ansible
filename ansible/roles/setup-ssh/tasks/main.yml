@@ -1,0 +1,87 @@
+- name: Setup machine database on jumpbox
+  ansible.builtin.copy:
+    src: ../../machines.txt        
+    dest: /root/machines.txt
+
+- name: Read machine list into variable
+  ansible.builtin.slurp:
+    src: /root/machines.txt
+  register: machines_file
+
+- name: Parse machine lines
+  set_fact:
+    machines: "{{ machines_file['content'] | b64decode | split('\n') }}"
+
+- name: Ensure root login is permitted
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: 'PermitRootLogin yes'
+    state: present
+    backrefs: yes
+
+- name: Ensure pubkey authentication is enabled
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PubkeyAuthentication'
+    line: 'PubkeyAuthentication yes'
+    state: present
+    backrefs: yes
+
+- name: Ensure password authentication is enabled
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PasswordAuthentication'
+    line: 'PasswordAuthentication yes'
+    state: present
+    backrefs: yes
+
+- name: Restart SSH service
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+
+- name: Update /etc/hosts on remote hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127.0.1.1'
+    line: "127.0.1.1 {{ item.split()[1] }} {{ item.split()[2] }}"
+  loop: "{{ machines }}"
+
+- name: Set hostname on remote hosts
+  ansible.builtin.hostname:
+    name: "{{ item.split()[2] }}"
+  loop: "{{ machines }}"
+  delegate_to: "{{ item.split()[0] }}"
+  run_once: false
+
+- name: Restart systemd-hostnamed
+  ansible.builtin.systemd:
+    name: systemd-hostnamed
+    state: restarted
+
+- name: Create temporary hosts file
+  copy:
+    dest: /tmp/hosts
+    content: |
+      # Kubernetes The Hard Way
+      {% for line in machines %}
+      {{ line.split()[0] }} {{ line.split()[1] }} {{ line.split()[2] }}
+      {% endfor %}
+
+- name: Copy hosts file to all nodes
+  ansible.builtin.copy:
+    src: /tmp/hosts
+    dest: /root/hosts
+    remote_src: true
+
+- name: Read hosts file from jumpbox
+  slurp:
+    src: /root/hosts
+  register: hosts_file
+
+- name: Append hosts to /etc/hosts
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    block: "{{ hosts_file['content'] | b64decode }}"
+  

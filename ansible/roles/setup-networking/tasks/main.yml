@@ -1,0 +1,28 @@
+- name: Read machine list into variable
+  ansible.builtin.slurp:
+    src: /root/machines.txt
+  register: machines_file
+
+- name: Parse machine lines
+  set_fact:
+    machines: "{{ machines_file['content'] | b64decode | split('\n') }}"
+
+- name: Configure routes on server
+  ansible.builtin.command:
+    cmd: ip route add {{ machines[1].split()[3] }} via {{machines[1].split()[0]}}
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Configure routes on server
+  ansible.builtin.command:
+    cmd: ip route add {{ machines[2].split()[3] }} via {{machines[2].split()[0]}}
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Configure routes on node-0
+  ansible.builtin.command:
+    cmd: ip route add {{ machines[1].split()[3] }} via {{machines[1].split()[0]}}
+  delegate_to: "{{ hosts[3] }}"
+
+- name: Configure routes on node-1
+  ansible.builtin.command:
+    cmd: ip route add {{ machines[2].split()[3] }} via {{machines[2].split()[0]}}
+  delegate_to: "{{ hosts[2] }}"

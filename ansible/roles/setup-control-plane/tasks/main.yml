@@ -1,0 +1,161 @@
+- name: Ensure config directory exists
+  file:
+    path: "/etc/kubernetes/config"
+    state: directory
+    mode: '0755'
+    recurse: yes
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Ensure Python3 is installed
+  apt:
+    name: python3
+    state: present
+    update_cache: yes
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ hosts }}"
+
+- name: Ensure pip3 is installed
+  apt:
+    name: python3-pip
+    state: present
+    update_cache: yes
+  become: true
+  delegate_to: "{{ item }}"
+  loop: "{{ hosts }}"
+
+- name: Install kubernetes Python package via pip3
+  pip:
+    name: kubernetes
+    extra_args: --break-system-package
+  become: true
+  delegate_to: "{{ item }}"
+  loop: "{{ hosts }}"
+
+- name: Install the Kubernetes binaries
+  copy:
+    remote_src: yes
+    src: "/root/kubernetes-the-hard-way/downloads/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: '0755'
+  delegate_to: '{{ hosts[1] }}'
+  loop:
+    - 'kube-controller-manager'
+    - 'kube-scheduler'
+    - 'kubectl'
+    - 'kube-apiserver'
+
+- name: Ensure kubernetes directory exists
+  file:
+    path: "/var/lib/kubernetes/"
+    state: directory
+    mode: '0755'
+    recurse: yes
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Move encryption_key.config
+  copy:
+    remote_src: yes
+    src: /root/kubernetes-the-hard-way/configs/encryption-config.yaml
+    dest: /var/lib/kubernetes/encryption-config.yaml
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Generate encryption_key
+  shell: "head -c 32 /dev/urandom | base64"
+  register: encryption_key
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Generate encryption_key.config
+  ansible.builtin.lineinfile:
+    path: /var/lib/kubernetes/encryption-config.yaml
+    regexp: '\${ENCRYPTION_KEY}'
+    line: "              secret: {{ encryption_key.stdout }}"
+  delegate_to: "{{ hosts[1] }}"
+
+- name: Move certs and keys to /var/lib/kubernetes
+  copy:
+    remote_src: yes
+    src: "/var/lib/kubelet/{{ item }}"
+    dest: "/var/lib/kubernetes/{{ item }}"
+    mode: '0755'
+  delegate_to: '{{ hosts[1] }}'
+  loop:
+    - 'ca.crt'
+    - 'ca.key'
+    - 'kube-api-server.key'
+    - 'kube-api-server.crt'
+    - 'service-accounts.key'
+    - 'service-accounts.crt'
+
+- name: Create the kube-apiserver.service systemd unit file
+  copy:
+    remote_src: yes
+    src: "/root/kubernetes-the-hard-way/units/kube-apiserver.service"
+    dest: "/etc/systemd/system/kube-apiserver.service"
+    mode: '0755'
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Configure Kubernetes Controller Manager and Kubernetes Scheduler
+  copy:
+    remote_src: yes
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: '0755'
+  delegate_to: '{{ hosts[1] }}'
+  loop:
+  - {src: '/root/kube-controller-manager.kubeconfig', dest: '/var/lib/kubernetes/kube-controller-manager.kubeconfig'}
+  - {src: '/root/kubernetes-the-hard-way/units/kube-controller-manager.service', dest: '/etc/systemd/system/kube-controller-manager.service'}
+  - {src: '/root/kube-scheduler.kubeconfig', dest: '/var/lib/kubernetes/kube-scheduler.kubeconfig'}
+  - {src: '/root/kubernetes-the-hard-way/configs/kube-scheduler.yaml', dest: '/etc/kubernetes/config/kube-scheduler.yaml'}
+  - {src: '/root/kubernetes-the-hard-way/units/kube-scheduler.service', dest: '/etc/systemd/system/kube-scheduler.service'}
+
+- name: Restart systemd configuration
+  ansible.builtin.systemd:
+    daemon_reload: true
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Enable kube services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+  delegate_to: '{{ hosts[1] }}'
+  loop:
+  - 'kube-apiserver'
+  - 'kube-controller-manager'
+  - 'kube-scheduler'
+
+- name: Start kube services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  delegate_to: '{{ hosts[1] }}'
+  loop:
+  - 'kube-apiserver'
+  - 'kube-controller-manager'
+  - 'kube-scheduler'
+
+- name: Check if kube-apiserver is active
+  ansible.builtin.command: systemctl is-active kube-apiserver
+  register: api_server_status
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Show kube-apiserver is active
+  ansible.builtin.debug:
+    var: api_server_status.stdout_lines
+
+- name: Get Cluster information for admin
+  kubernetes.core.k8s_cluster_info:
+    kubeconfig: "/root/admin.kubeconfig"
+  register: kube_api_status
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Show cluster information
+  debug:
+    var: kube_api_status
+
+- name: Apply kube-apiserver-to-kubelet RBAC config
+  kubernetes.core.k8s:
+    kubeconfig: /root/admin.kubeconfig
+    state: present
+    src: /root/kubernetes-the-hard-way/configs/kube-apiserver-to-kubelet.yaml
+  delegate_to: '{{ hosts[1] }}'

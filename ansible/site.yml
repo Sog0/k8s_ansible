@@ -1,7 +1,70 @@
 ---
 - name: Setup jumpbox
-  hosts: jumpbox
+  hosts: jumpbox, server, node0, node1
   become: true
   remote_user: vagrant
   roles:
     - setup-jumpbox
+
+- name: Setup ssh from jumpbox
+  hosts: jumpbox, server, node0, node1
+  become: true
+  remote_user: vagrant
+  roles:
+    - setup-ssh
+
+- name: Generate and put certificates
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - generate-certs
+
+- name: Generate configs
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - generate-configs
+
+- name: Bootstrap etcd
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - bootstrap-etcd
+
+- name: Bootstrap control
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - setup-control-plane
+
+- name: Bootstrap workers
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - setup-worker-nodes
+
+- name: Configure kubectl
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - configure-kubectl
+
+- name: Configure routes
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - setup-networking
+
+- name: Smoke test
+  hosts: jumpbox
+  become: true
+  remote_user: vagrant
+  roles:
+    - smoke-test

@@ -1,0 +1,29 @@
+- name: Set context for kube
+  ansible.builtin.command:
+    cmd: >
+      kubectl config set-cluster kubernetes-the-hard-way
+      --certificate-authority=/var/lib/kubelet/ca.crt
+      --embed-certs=true
+      --server=https://server.kubernetes.local:6443
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Set context for kube
+  ansible.builtin.command:
+    cmd: >
+      kubectl config set-credentials admin
+        --client-certificate=/root/admin.crt
+        --client-key=/root/admin.key
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Set context for kube
+  ansible.builtin.command:
+    cmd: >
+      kubectl config set-context kubernetes-the-hard-way
+        --cluster=kubernetes-the-hard-way
+        --user=admin
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Set context for kube
+  ansible.builtin.command:
+    cmd: kubectl config use-context kubernetes-the-hard-way
+  delegate_to: '{{ hosts[1] }}'

@@ -85,16 +85,10 @@
     dest: "/root/kubernetes-the-hard-way/downloads/cni-plugins"
     remote_src: yes
 
-- name: Ensure etcd-extract directory exists
-  file:
-    path: /root/kubernetes-the-hard-way/downloads/etcd-extract
-    state: directory
-    mode: '0755'
-
 - name: Extract etcd binaries
   unarchive:
     src: "/root/kubernetes-the-hard-way/downloads/etcd-v3.6.0-rc.3-linux-{{ arch }}.tar.gz"
-    dest: "/root/kubernetes-the-hard-way/downloads/etcd-extract"
+    dest: "/root/kubernetes-the-hard-way/downloads/"
     remote_src: yes
     extra_opts:
       - "--wildcards"
@@ -105,11 +99,10 @@
 - name: Move etcd and etcdctl to client folder
   copy:
     remote_src: yes
-    src: "/root/kubernetes-the-hard-way/downloads/etcd-extract/{{ item }}"
+    src: "/root/kubernetes-the-hard-way/downloads/{{ item }}"
     dest: "/root/kubernetes-the-hard-way/downloads/client/{{ item }}"
     mode: '0755'
   loop:
-    - etcd
     - etcdctl
 
 - name: Move kube binaries to their folders
@@ -119,6 +112,7 @@
     dest: "/root/kubernetes-the-hard-way/downloads/{{ item.dest }}/{{ item.src }}"
     mode: '0755'
   loop:
+    - { src: etcd, dest: controller }
     - { src: kube-apiserver, dest: controller }
     - { src: kube-controller-manager, dest: controller }
     - { src: kube-scheduler, dest: controller }

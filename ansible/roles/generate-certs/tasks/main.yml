@@ -1,0 +1,131 @@
+- name: Generate CA private key (ca.key)
+  ansible.builtin.command:
+    cmd: openssl genrsa -out /root/kubernetes-the-hard-way/ca.key 4096
+  args:
+    creates: /root/kubernetes-the-hard-way/ca.key
+
+- name: Generate CA certificate (ca.crt)
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -new -sha512 -noenc
+      -key /root/kubernetes-the-hard-way/ca.key
+      -days 3653
+      -config /root/kubernetes-the-hard-way/ca.conf
+      -out /root/kubernetes-the-hard-way/ca.crt
+  args:
+    creates: /root/kubernetes-the-hard-way/ca.crt
+
+- name: Read machine list into variable
+  ansible.builtin.slurp:
+    src: /root/machines.txt
+  register: machines_file
+
+- name: Parse machine lines
+  set_fact:
+    machines: "{{ machines_file['content'] | b64decode | split('\n') }}"
+
+- name: Ensure kubelet directory exists
+  file:
+    path: "/var/lib/kubelet/"
+    state: directory
+    mode: '0755'
+    recurse: yes
+  delegate_to: "{{ item.split()[0] }}"
+  loop: "{{ machines }}"
+
+#COPY BLOCK
+
+#ca.crt
+
+- name: Slurp ca.crt from jumpbox
+  slurp:
+    src: /root/kubernetes-the-hard-way/ca.crt
+  register: ca_crt_content
+
+- name: Create ca.crt on other nodes
+  copy:
+    content: "{{ ca_crt_content.content | b64decode }}"
+    dest: /var/lib/kubelet/ca.crt
+    mode: '0644'
+  delegate_to: "{{ item.split()[0] }}"
+  loop: "{{ machines }}"
+
+#ca.conf
+
+- name: Slurp ca.conf from jumpbox
+  slurp:
+    src: /root/kubernetes-the-hard-way/ca.conf
+  register: ca_conf_content
+
+- name: Copy ca.conf to other nodes
+  ansible.builtin.copy:
+    content: "{{ ca_conf_content.content | b64decode }}"
+    dest: /root/ca.conf
+    mode: '0644'
+  delegate_to: "{{ item.split()[0] }}"
+  loop: "{{ machines }}"
+
+#ca.key
+
+- name: Slurp ca.key from jumpbox
+  slurp:
+    src: /root/kubernetes-the-hard-way/ca.key
+  register: ca_key_content
+
+- name: Copy ca.key to other nodes
+  ansible.builtin.copy:
+    content: "{{ ca_key_content.content | b64decode }}"
+    dest: /root/ca.key
+    mode: '0644'
+  delegate_to: "{{ item.split()[0] }}"
+  loop: "{{ machines }}"
+
+- name: Copy ca.key internally for server node
+  ansible.builtin.copy:
+    src: /root/ca.key
+    dest: /var/lib/kubelet/ca.key
+    remote_src: true
+    mode: '0644'
+  delegate_to: "{{ machines[0].split()[0] }}"
+
+- name: Generate keys
+  ansible.builtin.command:
+    cmd: >
+        openssl genrsa -out "/var/lib/kubelet/{{ item.file }}.key" 4096
+  delegate_to: "{{ item.dest }}"
+  loop: 
+    - {dest: '192.168.56.12', file: 'kubelet'}
+    - {dest: '192.168.56.13', file: 'kubelet'}
+    - {dest: '192.168.56.11', file: 'kube-api-server'}
+    - {dest: '192.168.56.11', file: 'service-accounts'}
+
+- name: Generate csr (ca.csr)
+  ansible.builtin.command:
+    cmd: >
+          openssl req -new -key "/var/lib/kubelet/{{ item.file }}.key" -sha256
+          -config "/root/ca.conf" -section {{ item.section }} 
+          -out "/root/{{ item.file }}.csr"
+  delegate_to: "{{ item.dest }}"
+  loop: 
+    - {dest: '192.168.56.12', file: 'kubelet', section: 'node-0'}
+    - {dest: '192.168.56.13', file: 'kubelet', section: 'node-1'}
+    - {dest: '192.168.56.11', file: 'kube-api-server', section: 'kube-api-server'}
+    - {dest: '192.168.56.11', file: 'service-accounts', section: 'service-accounts'}
+
+- name: Generate certificates
+  ansible.builtin.command:
+    cmd: >
+        openssl x509 -req -days 3653 
+        -in "/root/{{ item.file }}.csr" 
+        -copy_extensions copyall -sha256 
+        -CA "/var/lib/kubelet/ca.crt" 
+        -CAkey "/root/ca.key" 
+        -CAcreateserial 
+        -out "/var/lib/kubelet/{{ item.file }}.crt"
+  delegate_to: "{{ item.dest }}"
+  loop:
+    - {dest: '192.168.56.12', file: 'kubelet'}
+    - {dest: '192.168.56.13', file: 'kubelet'}
+    - {dest: '192.168.56.11', file: 'kube-api-server'}
+    - {dest: '192.168.56.11', file: 'service-accounts'}
+

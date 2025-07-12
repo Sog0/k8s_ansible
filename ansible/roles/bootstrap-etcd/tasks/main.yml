@@ -1,0 +1,67 @@
+- name: Install the etcd Binaries 
+  copy:
+    remote_src: yes
+    src: "/root/kubernetes-the-hard-way/downloads/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: '0755'
+  delegate_to: '{{ hosts[1] }}'
+  loop:
+    - 'etcd'
+    - 'etcdctl'
+
+- name: Ensure etcd directories exists
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+  delegate_to: "{{ hosts[1] }}"
+  loop: 
+    - '/etc/etcd'
+    - '/var/lib/etcd'
+
+- name: Move certs to /etc/etcd
+  copy:
+    remote_src: yes
+    src: "/var/lib/kubelet/{{ item }}"
+    dest: "/etc/etcd/{{ item }}"
+    mode: '0700'
+  delegate_to: '{{ hosts[1] }}'
+  loop: 
+    - 'ca.crt'
+    - 'kube-api-server.key'
+    - 'kube-api-server.crt'
+    
+- name: Create the etcd.service systemd unit file 
+  copy:
+    remote_src: yes
+    src: "/root/kubernetes-the-hard-way/units/etcd.service"
+    dest: "/etc/systemd/system/etcd.service"
+    mode: '0755'
+  delegate_to: '{{ hosts[1] }}'
+  
+- name: Restart systemd configuration
+  ansible.builtin.systemd:
+    daemon_reload: true
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Enable etcd
+  ansible.builtin.systemd:
+    name: etcd
+    enabled: true
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Start etcd
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Get etcd member list
+  ansible.builtin.command: /usr/local/bin/etcdctl member list
+  register: etcd_member_list
+  delegate_to: '{{ hosts[1] }}'
+
+- name: Show result of etcdctl member list
+  ansible.builtin.debug:
+    var: etcd_member_list.stdout_lines
